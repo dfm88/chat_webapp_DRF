@@ -1,0 +1,29 @@
+# A simple API for a chat app:
+
+Setting the stage:
+    You're the founder of this new messaging startup and you're building your first product.
+    You know it will change over time with feedback from the rest of the team and your users; but you still need to start somewhere...
+    Since this is your startup and product that you are going to maintain and extend for some time, it's up to you to set up and use the practices that you think are important to you.
+    You're the boss! ;-)
+    With this first release, your task is to expose an initial API that caters for the following stories.
+
+User stories:
+    1. As a user, I want to be able to see all the other users on the platform.
+    2. As a user, I want to be able to see my conversation with another user
+    3. As a user, I want to be able to message another user on the platform.
+
+Non functional requirements:
+    * The API has to be written in Python/Django.
+    * You can use any open source libraries you want
+    * The code should be stored in a code repository (Bitbucket, GitHub, GitLab or other)
+    * You do not need to setup any user registration or management, it's fine to create users using Django shell
+
+Setup:
+    We have set up a Django skeleton project for you to use, including Docker setup.
+    You can find the project at https://github.com/jobylon/jbl-chat
+    Clone the repo, implement the fix and make a PR to your cloned repo
+    Feel free to use Docker for dev or Python venv for your local development.
+
+Final note:
+    In this test, you do not need to create a frontend.
+    The task is to build an API using hte practices that you think are important to you.

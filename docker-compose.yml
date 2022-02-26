@@ -1,25 +1,7 @@
 version: '3.7'
 
 services:
-  web:
-    build:
-      context: .
-      dockerfile: ./Dockerfile
-    image: jblchat
-    # command: /start
-    #   sh -c "python manage.py"
-      # sh -c "python jbl_chat/manage.py migrate && python jbl_chat/manage.py runserver 0.0.0.0:8000"
-    volumes:
-      - .:/code
-    ports:
-      - "8000:8000"
-      - "8081:8081"
-    stdin_open: true
-    tty: true
-    depends_on:
-      - db
-    env_file:
-      - ./.env
+## POSTGRESQL
   db:
     image: postgres
     volumes:
@@ -28,3 +10,42 @@ services:
       - ./.env
     ports:
       - "5432:5432"
+
+## DJANGO APP
+  web:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    image: jblchat
+    # command:
+    #   sh -c "python jbl_chat/manage.py migrate && python jbl_chat/manage.py runserver 0.0.0.0:8000"
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/code
+    ports:
+      - "8000:8000"
+      - "8081:8081"
+    depends_on:
+      - db
+    env_file:
+      - ./.env
+
+## REDIS
+  redis:
+    image: redis:alpine
+
+## CELERY
+  celery:
+    restart: always
+    build:
+      context: .
+    command: sh -c "cd jbl_chat && celery -A jbl_chat worker -l info"
+    volumes:
+      - .:/code
+    env_file:
+      - ./.env
+    depends_on:
+      - db
+      - redis
+      - web

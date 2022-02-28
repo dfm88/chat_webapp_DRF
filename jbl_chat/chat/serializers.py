@@ -13,10 +13,11 @@ class MembershipSerializer(serializers.ModelSerializer):
 
 class ChatRoomSerializer(serializers.ModelSerializer):
     room_member = serializers.SerializerMethodField(method_name='get_room_members')
+    messages = serializers.ListField(required=False)
 
     class Meta:
         model = ChatRoom
-        fields = ('id', 'room_name', 'room_member')
+        fields = ('id', 'room_name', 'room_member', 'messages')
 
     def get_room_members(self, chatroom):
         """excludes user that left the chat room """
@@ -44,6 +45,13 @@ class MemberSerializer(serializers.ModelSerializer):
 
 class MessageSerializer(serializers.ModelSerializer):
     room = ChatRoomSerializer()
+    msg_from = MemberSerializer()
+
+    class Meta:
+        model = Message
+        fields = '__all__'
+
+class BaseMessageSerializer(serializers.ModelSerializer):
     msg_from = MemberSerializer()
 
     class Meta:

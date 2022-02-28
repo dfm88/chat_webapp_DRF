@@ -230,3 +230,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Redis and Celery Conf
 CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL')
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND')
+
+CELERY_ACCEPT_CONTENT = ['application/json']
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TASK_SERIALIZER = 'json'

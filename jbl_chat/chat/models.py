@@ -64,7 +64,6 @@ class ChatRoom(models.Model):
     def get_direct_chat_name(self, sender:User, receiver:User) -> str:
         # for direct message room name is default sender.username - receiver.username
         sorted_partecipants = self._sort_partecipants_by_id(sender, receiver)
-        print(sorted_partecipants)
         partecipants_usrn = [x.username for x in sorted_partecipants]
         return '{0} - {1}'.format(*partecipants_usrn) 
 
@@ -82,6 +81,9 @@ class Message(models.Model):
     msg_from = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="msg_as_sender")
     text = models.TextField(max_length=1024, default="")
     sent_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return "{} - Message message from {}".format(self.pk, self.msg_from.username)
 
 class SeenMessage(models.Model):
     message = models.ForeignKey(Message, on_delete=models.CASCADE)

@@ -20,6 +20,7 @@ django-redis==5.2.0
 django-redis-cache==3.0.0
 djangorestframework-jsonapi==5.0.0
 executing==0.8.2
+flower==1.0.0
 idna==3.3
 ipdb==0.13.9
 ipython==8.1.0

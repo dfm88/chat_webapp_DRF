@@ -1,3 +1,5 @@
+from calendar import c
+from functools import partial
 from django.core.exceptions import ValidationError
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -10,7 +12,16 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from chat.models import ChatRoom, Membership, Message, SeenMessage
-from chat.serializers import ChatRoomSerializer, MessageSerializer
+from chat.serializers import BaseMessageSerializer, ChatRoomSerializer, MessageSerializer
+
+from ..tasks import (
+    set_msg_as_seen, 
+    send_direct_message, 
+    send_group_message,
+)
+from celery.result import AsyncResult
+
+
 
 def validate_data(data, *attributes):
     """utility to check attribute in request body
@@ -240,7 +251,6 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
 
 
 
-
 ###########################
 ## MESSAGES
 ###########################
@@ -261,7 +271,7 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
             if not user_id.isdigit:
                 raise ValidationError("user id most be a number")
             user_id = int(user_id)
-            reader: User = User.objects.get(pk=user_id)
+            _: User = User.objects.get(pk=user_id)
 
             # get the chatroom
             user_chat_room = ChatRoom.objects.prefetch_related('message_set').get(
@@ -271,21 +281,15 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
                 ).chatroom_id
             )
 
-            # get the messages related to the chat_room and if 
-            # they were already readed
-            chat_room_msgs = user_chat_room.message_set.prefetch_related(
-                'seenmessage_set'
-            ).all()
+            user_chat_room.messages = BaseMessageSerializer(
+                user_chat_room.message_set.all(), 
+                many=True
+            ).data
+            
+            # set asynchronously the messages as 'seen'
+            set_msg_as_seen.delay(chat_room_id=user_chat_room.pk, sender_id=user_id)
 
-            # set as 'seen' all messages that weren't already seen by me
-            # excluding those I wrote (don't set as seen my own messages)
-            # TODO async
-            for new_msg in chat_room_msgs.exclude(msg_from=reader).filter(
-                Q(seenmessage__isnull=True) | ~Q(seenmessage__seen_by=reader)
-            ):
-                SeenMessage.objects.update_or_create(message=new_msg, seen_by=reader)
-
-            ser = MessageSerializer(chat_room_msgs, many=True)
+            ser = ChatRoomSerializer(user_chat_room)
 
             ctx['status'] = status.HTTP_200_OK
             ctx['message']= 'HTTP_200_OK'
@@ -307,6 +311,104 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
             ctx['status'] = status.HTTP_404_NOT_FOUND
             ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    ###
+    # GET my all mine unseen msgs chat__get_unseen_messages 
+    # for long polling purpose to get all unseen messages
+    ###
+    def get_only_unseen_msgs(self, request, *args, **kwargs):
+        """ No auth, takes the request user from qs ?user_id=<user_id>
+        """
+        ctx = {}
+        try:
+            user_id: str = request.GET.get('user_id', '')
+            if not user_id.isdigit:
+                raise ValidationError("user id most be a number")
+            user_id = int(user_id)
+            reader: User = User.objects.get(pk=user_id)
+            # get all mine chatroom
+            user_chat_rooms = ChatRoom.objects.prefetch_related('message_set').filter(
+                id__in = Membership.objects.filter(
+                    user_id=user_id,
+                ).values('chatroom_id')
+            )
+
+            chat_rooms = []
+            # for all chatroom set all unseen msgs for user
+            for cr in user_chat_rooms:
+                cr_msgs = cr.message_set.prefetch_related(
+                    'seenmessage_set'
+                )
+                unseen_msgs = cr_msgs.exclude(
+                    msg_from=reader
+                ).filter(
+                    Q(seenmessage__isnull=True) | ~Q(seenmessage__seen_by=reader)
+                )
+                cr.messages = BaseMessageSerializer(unseen_msgs, many=True).data
+                chat_rooms.append(cr)
+
+                # set asynchronously the messages as 'seen'
+                set_msg_as_seen.delay(chat_room_id=cr.pk, sender_id=user_id)
+            
+
+            ser = ChatRoomSerializer(chat_rooms, many=True)
+
+            ctx['status'] = status.HTTP_200_OK
+            ctx['message']= 'HTTP_200_OK'
+            ctx['data'] = ser.data
+
+            return Response(ctx, status=status.HTTP_200_OK)
+
+        except ObjectDoesNotExist as ex:
+            ctx['status'] = status.HTTP_404_NOT_FOUND
+            ctx['msg'] = str(ex)         
+            return Response(ctx, status=status.HTTP_404_NOT_FOUND)
+
+        except ValidationError as ex:
+            ctx['status'] = status.HTTP_400_BAD_REQUEST
+            ctx['msg'] = str(ex)         
+            return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as ex:
+            ctx['status'] = status.HTTP_404_NOT_FOUND
+            ctx['msg'] = str(ex)
+            return Response(ctx, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+###########################
+## MESSAGES STATUS
+###########################
+
+# get my message status by job id
+class MessageStatusAPIView(viewsets.ViewSet):
+
+    ###
+    # GET chat__get_message_status
+    ###
+    def message_task_status(self, request, task_id, *args, **kwargs):
+        """ A view to report the progress to the user """
+        ctx = {}
+        try:
+            job = AsyncResult(task_id)
+            data = job.result or job.state
+            ctx['status'] = data
+            return Response(ctx, status=status.HTTP_200_OK)
+
+        except ObjectDoesNotExist as ex:
+            ctx['status'] = status.HTTP_404_NOT_FOUND
+            ctx['msg'] = str(ex)         
+            return Response(ctx, status=status.HTTP_404_NOT_FOUND)
+
+        except ValidationError as ex:
+            ctx['status'] = status.HTTP_400_BAD_REQUEST
+            ctx['msg'] = str(ex)         
+            return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as ex:
+            ctx['status'] = status.HTTP_404_NOT_FOUND
+            ctx['msg'] = str(ex)
+            return Response(ctx, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 # message to user / group
@@ -337,23 +439,12 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
             if validation_err:
                 raise ValidationError('Attribute/s {} missing'.format(' - '.join(validation_err)))
 
-            sender = User.objects.get(pk=data['from'])
-            receiver = User.objects.get(pk=user_id)
-
-            cr:ChatRoom = ChatRoom().get_or_create_direct_chat(
-                receiver=receiver, sender=sender
-            )
-
-            msg = Message.objects.create(
-                room=cr,
-                msg_from=sender,
-                text=data['text']
-            )
-            ser = MessageSerializer(msg)
+            # send asynchronously the message
+            job = send_direct_message.delay(data=data, user_id=user_id)
 
             ctx['status'] = status.HTTP_200_OK
             ctx['message']= 'HTTP_200_OK'
-            ctx['data'] = ser.data
+            ctx['data'] = job.id
 
             return Response(ctx, status=status.HTTP_200_OK)
 
@@ -391,19 +482,12 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
             if validation_err:
                 raise ValidationError('Attribute/s {} missing'.format(' - '.join(validation_err)))
 
-            sender = User.objects.get(pk=data['from'])
-            receiver = ChatRoom.objects.get(pk=group_id)
-
-            msg = Message.objects.create(
-                room=receiver,
-                msg_from=sender,
-                text=data['text']
-            )
-            ser = MessageSerializer(msg)
+            # send asynchronously the message
+            job = send_group_message.delay(data=data, group_id=group_id)
 
             ctx['status'] = status.HTTP_200_OK
             ctx['message']= 'HTTP_200_OK'
-            ctx['data'] = ser.data
+            ctx['data'] = job.id
 
             return Response(ctx, status=status.HTTP_200_OK)
 

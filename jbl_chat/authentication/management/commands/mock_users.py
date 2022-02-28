@@ -22,7 +22,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             for i in range(15):
-                username = f"user_{i}"
+                username = f"user_{i+1}"
                 password = "Passw0rd!"
                 MockManager.create_user(username=username, password=password)
         except Exception as ex:

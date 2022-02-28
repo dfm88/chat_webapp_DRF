@@ -19,7 +19,6 @@ def delete_membership(sender, instance: Membership, **kwargs):
 @receiver(post_delete, sender=Membership)
 def delete_chatroom(sender, instance: Membership, **kwargs):
     # if no member is left in the chat room, delete it
-    import ipdb; ipdb.set_trace()
     if not Membership.objects.filter(
         chatroom_id=instance.chatroom_id,
         date_lefted__isnull=True

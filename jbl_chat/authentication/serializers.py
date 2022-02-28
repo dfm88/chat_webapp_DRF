@@ -1,5 +1,5 @@
 from random import random
-from django.core.exceptions import ValidationErr
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from .models import Profile
 from rest_framework import serializers
@@ -44,4 +44,4 @@ class UserSerializer(serializers.ModelSerializer):
             profile_ser.save()
             return user
 
-        raise ValidationErr(profile_ser.errors)
+        raise ValidationError(profile_ser.errors)

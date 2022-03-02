@@ -26,6 +26,6 @@ def delete_chatroom(sender, instance: Membership, **kwargs):
         # disable signals to avoid recursion
         Signal.disconnect(post_delete, receiver=delete_chatroom, sender=Membership)
         Signal.disconnect(post_delete, receiver=delete_membership, sender=Membership)
-        ChatRoom.objects.filter(pk=instance.chatroom_id).delete
+        ChatRoom.objects.get(pk=instance.chatroom_id).delete()
 
 

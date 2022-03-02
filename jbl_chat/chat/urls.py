@@ -34,7 +34,8 @@ chatroom_list_create = ChatListCreateAPIView.as_view({
     'post':'create_chatroom'
 })
 
-leave_join_chatroom = ChatDestroyUpdateRetrieveAPIView.as_view({
+leave_join_read_chatroom = ChatDestroyUpdateRetrieveAPIView.as_view({
+    'get': 'read_chat',
     'delete':'leave_chat', 
     'put':'add_user_to_chat'
 })
@@ -58,8 +59,8 @@ urlpatterns = [
     # CHATROOMS
     ###
     # get -create chatroom
-    path('chatroom/', chatroom_list_create, name='chat__get_chat'),
+    path('chatroom/', chatroom_list_create, name='chat__get_create_chat'),
     # leave - join chatroom
-    path('chatroom/<int:group_id>/', leave_join_chatroom, name='chat__join_leave_chat'),
+    path('chatroom/<int:group_id>/', leave_join_read_chatroom, name='chat__join_leave_read_chat'),
 
 ]

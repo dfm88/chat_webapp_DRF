@@ -7,8 +7,8 @@ import base64
 
 # Create your models here.
 class ChatRoom(models.Model):
-    internal_identifier = models.CharField(max_length=255, unique=True)
-    room_name = models.CharField(max_length=255, unique=True)
+    internal_identifier = models.CharField(max_length=255, unique=True, blank=False)
+    room_name = models.CharField(max_length=255, unique=True, blank=False)
     room_member = models.ManyToManyField(User, through='Membership')
     is_direct = models.BooleanField(default=False)
     
@@ -44,7 +44,7 @@ class ChatRoom(models.Model):
         return base_hash
 
     def get_group_internal_id(self, group_name: str) -> str:
-        """Creates uniwue id for group chats
+        """Creates unique id for group chats
         """
         return self.encode_msg(group_name)
 
@@ -67,6 +67,16 @@ class ChatRoom(models.Model):
         partecipants_usrn = [x.username for x in sorted_partecipants]
         return '{0} - {1}'.format(*partecipants_usrn) 
 
+    def save(self, *args, **kwargs):
+        # avoid null field in unique identifier
+
+        if not getattr(self, 'internal_identifier', None):
+            if getattr(self, 'room_name', None):
+                #TODO listen for change on the group name to update the identifier
+                setattr(self, 'internal_identifier', self.encode_msg(self.room_name))
+        if self._state.adding:
+            return super().save(*args, **kwargs)
+
     def __str__(self):
         return self.room_name
 
@@ -75,6 +85,24 @@ class Membership(models.Model):
     chatroom = models.ForeignKey(ChatRoom, on_delete=models.CASCADE)
     date_joined = models.DateTimeField(auto_now_add=True)
     date_lefted = models.DateTimeField(null=True, default=None)
+
+    def save(self, *args, **kwargs) -> None:
+        # chek if last element of user-chatroom has the
+        # 'date_lefed empt it means that the user still
+        # belongs to chatroom, so do nothing
+        last_join = Membership.objects.filter(
+            user=self.user, chatroom=self.chatroom
+        ).last()
+
+        if last_join and last_join.date_lefted is None:
+            return
+            
+        return super().save(*args, **kwargs)
+    class Meta:
+        unique_together = (
+            ('user', 'chatroom', 'date_joined'), 
+            ('user', 'chatroom', 'date_lefted')
+        )
 
 class Message(models.Model):
     room = models.ForeignKey(ChatRoom, on_delete=models.CASCADE)
@@ -89,4 +117,3 @@ class SeenMessage(models.Model):
     message = models.ForeignKey(Message, on_delete=models.CASCADE)
     seen_by = models.ForeignKey(User, on_delete=models.CASCADE, null=True)
     seen_at = models.DateTimeField(auto_now_add=True)
-

@@ -1,5 +1,4 @@
 from calendar import c
-from functools import partial
 from django.core.exceptions import ValidationError
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
@@ -10,9 +9,16 @@ from django.db.models import Q
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.response import Response
 from rest_framework import status
+from django.conf import settings
 
 from chat.models import ChatRoom, Membership, Message, SeenMessage
-from chat.serializers import BaseMessageSerializer, ChatRoomSerializer, MessageSerializer
+from chat.serializers import (
+    BaseChatRoomSerializer, 
+    BaseMessageSerializer, 
+    ChatRoomSerializer, 
+    MessageSerializer, 
+    SeenMessageSerializer,
+)
 
 from ..tasks import (
     set_msg_as_seen, 
@@ -20,7 +26,14 @@ from ..tasks import (
     send_group_message,
 )
 from celery.result import AsyncResult
+from celery.app.task import Task
+from celery import Celery
+celery_app = Celery('jbl_chat')
+from importlib import import_module
 
+## LOGGING
+import logging
+logger = logging.getLogger(__name__)
 
 
 def validate_data(data, *attributes):
@@ -39,6 +52,33 @@ def validate_data(data, *attributes):
             yield attr
 
 
+def prefetch_celery_behaviour(*tasks: Task):
+    """ Receives a list of celery tasks and prefetch for each view the
+        function that the will call:
+        - apply_aync : if it's not called by a test unit (runs asynchronously)
+        - apply      : if it's called by a test unit (runs synchronously)
+
+        Extends the views kwargs with the task method to be called
+    """
+    def sync_or_aync(func):
+        def wrapper(*args, **kwargs):
+
+            if getattr(settings, 'TESTING', False):
+                logger.info("View called in TESTING, celery will be applied synchronously")
+                for _task in tasks:
+                    kwargs[_task.__name__] = _task.apply
+            else:
+                logger.info("View called not in TESTING, celery will be applied asynchronously")
+                for _task in tasks:
+                    kwargs[_task.__name__] = _task.apply
+            
+            return func(*args, **kwargs)
+
+        return wrapper
+
+    return sync_or_aync
+
+
 ###########################
 ## CHAT ROOMS
 ###########################
@@ -50,21 +90,40 @@ class ChatListCreateAPIView(viewsets.ViewSet):
     # GET my chats
     ###
     def get(self, request, *args, **kwargs):
-        """ No auth, takes the request user from qs ?user_id=<user_id>
+        """ 
+            No auth, takes the request user from qs ?user_id=<user_id>
+
+            If user_id is provided, return all the chatrooms and theire messages
+            of user_id
+
+            I no id is provided, returns all the chatrooms (groups not private) 
+            showing only the chatroom names and ids 
+
         """
         ctx = {}
         try:
             user_id: str = request.GET.get('user_id', '')
-            if not user_id.isdigit:
-                raise ValidationError("user id most be a number")
-            user_id = int(user_id)
-            _: User = User.objects.get(pk=user_id)
-            user_chat_rooms = ChatRoom.objects.filter(
-                id__in = Membership.objects.filter(
-                    user_id=user_id
-                ).values('chatroom_id')
-            )
-            ser = ChatRoomSerializer(user_chat_rooms, many=True)
+
+            # no user specified in the request query param
+            if not user_id:
+                all_chat_rooms = ChatRoom.objects.filter(
+                    is_direct=False
+                )
+                ser = BaseChatRoomSerializer(all_chat_rooms, many = True)
+
+            # user specified in the request query param
+            else: 
+                if not user_id.isdigit:
+                    raise ValidationError("user id most be a number")
+                user_id = int(user_id)
+                _: User = User.objects.get(pk=user_id)
+                user_chat_rooms = ChatRoom.objects.filter(
+                    id__in = Membership.objects.filter(
+                        user_id=user_id,
+                        date_lefted__isnull=True
+                    ).values('chatroom_id')
+                )
+                ser = ChatRoomSerializer(user_chat_rooms, many=True)
 
             ctx['status'] = status.HTTP_200_OK
             ctx['message']= 'HTTP_200_OK'
@@ -112,7 +171,6 @@ class ChatListCreateAPIView(viewsets.ViewSet):
             if validation_err:
                 raise ValidationError('Attribute/s {} missing'.format(' - '.join(validation_err)))
 
-
             cr:ChatRoom = ChatRoom.objects.create(
                 room_name=data['room_name'],
                 internal_identifier=ChatRoom().get_group_internal_id(data['room_name']),
@@ -121,12 +179,18 @@ class ChatListCreateAPIView(viewsets.ViewSet):
 
             # if member list is provided, add them to group
             username_list = [el['username'] for el in data.get('room_member', [])]
-            room_members = User.objects.filter(
-                username__in=(username_list)
-            )
+            if username_list:
+                room_members = User.objects.filter(
+                    username__in=(username_list)
+                )
 
-            cr.room_member.set(room_members)
-            cr.save()
+                if not room_members:
+                    logger.warn("no user of {} will join {} causa they don't exist".format(
+                        username_list, data['room_name']
+                    ))
+
+                cr.room_member.set(room_members)
+                cr.save()
                 
             ser = ChatRoomSerializer(cr, many=False)
 
@@ -156,7 +220,70 @@ class ChatListCreateAPIView(viewsets.ViewSet):
 class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
 
     ###
-    # DELETE chat__leave_chat
+    # GET chat__join_leave_read_chat
+    ###
+    def read_chat(self, request, group_id, *args, **kwargs):
+        """ 
+            No auth, takes the request user from qs ?user_id=<user_id>
+
+            If user_id is provided, returns the <group_id> chatroom and its messages
+
+            I no id is provided, returns the <group_id> chatroom (groups not private) 
+            showing only the chatroom name and id 
+
+        """
+        ctx = {}
+        try:
+            user_id: str = request.GET.get('user_id', '')
+
+            # no user specified in the request query param
+            if not user_id:
+                chat_room_no_details = ChatRoom.objects.get(
+                    pk=group_id,
+                    is_direct=False
+                )
+                ser = BaseChatRoomSerializer(chat_room_no_details)
+
+            # user specified in the request query param
+            else: 
+                if not user_id.isdigit:
+                    raise ValidationError("user id most be a number")
+                user_id = int(user_id)
+                _: User = User.objects.get(pk=user_id)
+                chat_room_details = ChatRoom.objects.get(
+                    id = Membership.objects.get(
+                        user_id=user_id,
+                        chatroom_id=group_id,
+                        date_lefted__isnull=True
+                    ).chatroom_id,
+                    is_direct=False
+                )
+                ser = ChatRoomSerializer(chat_room_details)
+
+            ctx['status'] = status.HTTP_200_OK
+            ctx['message']= 'HTTP_200_OK'
+            ctx['data'] = ser.data
+
+            return Response(ctx, status=status.HTTP_200_OK)
+
+
+        except ObjectDoesNotExist as ex:
+            ctx['status'] = status.HTTP_404_NOT_FOUND
+            ctx['msg'] = str(ex)         
+            return Response(ctx, status=status.HTTP_404_NOT_FOUND)
+
+        except ValidationError as ex:
+            ctx['status'] = status.HTTP_400_BAD_REQUEST
+            ctx['msg'] = str(ex)         
+            return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
+
+        except Exception as ex:
+            ctx['status'] = status.HTTP_404_NOT_FOUND
+            ctx['msg'] = str(ex)
+            return Response(ctx, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    ###
+    # DELETE chat__join_leave_read_chat
     ###
     def leave_chat(self, request, group_id, *args, **kwargs):
         """removes the membership association user-chat_room
@@ -178,8 +305,9 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
             
             if not leaver in cr.room_member.all():
                 raise ValidationError("User %s is not part of this group" % leaver.username)
-            cr.room_member.remove(leaver)
 
+            cr.room_member.remove(leaver)
+            
             ctx['status'] = status.HTTP_204_NO_CONTENT
             ctx['message']= 'HTTP_204_NO_CONTENT'
 
@@ -201,7 +329,7 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
             return Response(ctx, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     ###
-    # PUT chat__join_chat
+    # PUT chat__join_leave_read_chat
     ###
     def add_user_to_chat(self, request, group_id, *args, **kwargs):
         """It is possible to join only in a grouo chat 'is_direct=False'
@@ -218,16 +346,14 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
             new_member: User = User.objects.get(pk=user_id)
             cr:ChatRoom = ChatRoom.objects.get(pk=group_id)
 
-            
-            if new_member in cr.room_member.all():
+            if new_member in cr.room_member.filter(membership__date_lefted__isnull=True):
                 raise ValidationError("User %s is already part of this group" % new_member.username)
             
             else:
                 if cr.is_direct:
                     raise ValidationError("Can't join a private chat")
 
-            
-            cr.room_member.add(new_member)
+            Membership.objects.create(user=new_member, chatroom=cr)
 
             ctx['status'] = status.HTTP_200_OK
             ctx['message']= 'HTTP_200_OK'
@@ -262,10 +388,12 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
     ###
     # GET my messages with a specific room chat__get_room_messages
     ###
+    @prefetch_celery_behaviour(set_msg_as_seen,)
     def get_msg_by_group(self, request, group_id, *args, **kwargs):
         """ No auth, takes the request user from qs ?user_id=<user_id>
         """
         ctx = {}
+        set_msg_as_seen_apply_task = kwargs['set_msg_as_seen']
         try:
             user_id: str = request.GET.get('user_id', '')
             if not user_id.isdigit:
@@ -277,7 +405,8 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
             user_chat_room = ChatRoom.objects.prefetch_related('message_set').get(
                 id = Membership.objects.get(
                     user_id=user_id,
-                    chatroom_id=group_id
+                    chatroom_id=group_id,
+                    date_lefted__isnull=True
                 ).chatroom_id
             )
 
@@ -287,7 +416,12 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
             ).data
             
             # set asynchronously the messages as 'seen'
-            set_msg_as_seen.delay(chat_room_id=user_chat_room.pk, sender_id=user_id)
+            set_msg_as_seen_apply_task(
+                kwargs={
+                    'chat_room_id':user_chat_room.pk, 
+                    'reader_id':user_id
+                }
+            )
 
             ser = ChatRoomSerializer(user_chat_room)
 
@@ -316,10 +450,12 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
     # GET my all mine unseen msgs chat__get_unseen_messages 
     # for long polling purpose to get all unseen messages
     ###
+    @prefetch_celery_behaviour(set_msg_as_seen,)
     def get_only_unseen_msgs(self, request, *args, **kwargs):
         """ No auth, takes the request user from qs ?user_id=<user_id>
         """
         ctx = {}
+        set_msg_as_seen_apply_task = kwargs['set_msg_as_seen']
         try:
             user_id: str = request.GET.get('user_id', '')
             if not user_id.isdigit:
@@ -330,6 +466,7 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
             user_chat_rooms = ChatRoom.objects.prefetch_related('message_set').filter(
                 id__in = Membership.objects.filter(
                     user_id=user_id,
+                    date_lefted__isnull=True
                 ).values('chatroom_id')
             )
 
@@ -348,7 +485,12 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
                 chat_rooms.append(cr)
 
                 # set asynchronously the messages as 'seen'
-                set_msg_as_seen.delay(chat_room_id=cr.pk, sender_id=user_id)
+                set_msg_as_seen_apply_task(
+                    kwargs={
+                        'chat_room_id':cr.pk, 
+                        'reader_id':user_id
+                    }
+                )
             
 
             ser = ChatRoomSerializer(chat_rooms, many=True)
@@ -390,8 +532,11 @@ class MessageStatusAPIView(viewsets.ViewSet):
         ctx = {}
         try:
             job = AsyncResult(task_id)
-            data = job.result or job.state
-            ctx['status'] = data
+            ctx['state'] = job.state
+            if isinstance(job.result, Exception):
+                ctx['result'] = str(job.result)
+            else:
+                ctx['result'] = job.result
             return Response(ctx, status=status.HTTP_200_OK)
 
         except ObjectDoesNotExist as ex:
@@ -420,6 +565,7 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
     ###
     # POST chat__message_user_create
     ###
+    @prefetch_celery_behaviour(send_direct_message,)
     def message_user(self, request, user_id, *args, **kwargs):
         """Takes both users and creates a dedicated chat room
         the chatroom identifier is created (and retrieved) by ordering the
@@ -429,6 +575,7 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
         Receiver is retrieved from 'user_id'
         """
         ctx = {}
+        send_direct_message_apply_task = kwargs['send_direct_message']
         try:
             data = request.data
             # In case no data is sent or list is sent --> 400
@@ -438,9 +585,13 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
             validation_err = list(validate_data(data, 'from', 'text'))
             if validation_err:
                 raise ValidationError('Attribute/s {} missing'.format(' - '.join(validation_err)))
-
-            # send asynchronously the message
-            job = send_direct_message.delay(data=data, user_id=user_id)
+        
+            job = send_direct_message_apply_task(
+                kwargs={
+                    'data':data, 
+                    'user_id':user_id
+                }
+            )
 
             ctx['status'] = status.HTTP_200_OK
             ctx['message']= 'HTTP_200_OK'
@@ -466,12 +617,14 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
     ###
     # POST chat__message_group_create
     ###
+    @prefetch_celery_behaviour(send_group_message,)
     def message_group(self, request, group_id, *args, **kwargs):
         """for group message, group need to exists
             No Auth so sender user is retrived by "from" attribute in body
             Receiver is retrieved from 'group_id'
         """
         ctx = {}
+        send_group_message_apply_task = kwargs['send_group_message']
         try:
             data = request.data
             # In case no data is sent or list is sent --> 400
@@ -483,7 +636,12 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
                 raise ValidationError('Attribute/s {} missing'.format(' - '.join(validation_err)))
 
             # send asynchronously the message
-            job = send_group_message.delay(data=data, group_id=group_id)
+            job = send_group_message_apply_task(
+                kwargs={
+                    'data':data, 
+                    'group_id': group_id
+                }
+            )
 
             ctx['status'] = status.HTTP_200_OK
             ctx['message']= 'HTTP_200_OK'

@@ -7,6 +7,7 @@ COPY ./requirements.txt /code/requirements.txt
 RUN pip install -r requirements.txt
 RUN apt update
 RUN apt install -y vim
+RUN apt install -y postgresql-client
 COPY . /code/
 
 # Creates a non-root user with an explicit UID and adds permission to access the /code folder

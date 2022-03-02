@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.authentication import BasicAuthentication
 from django.contrib.auth.models import User
-from django.db.models import Q
+from django.db.models import Subquery, OuterRef
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework.response import Response
 from rest_framework import status
@@ -13,16 +13,16 @@ from django.conf import settings
 
 from chat.models import ChatRoom, Membership, Message, SeenMessage
 from chat.serializers import (
-    BaseChatRoomSerializer, 
-    BaseMessageSerializer, 
-    ChatRoomSerializer, 
-    MessageSerializer, 
+    BaseChatRoomSerializer,
+    BaseMessageSerializer,
+    ChatRoomSerializer,
+    MessageSerializer,
     SeenMessageSerializer,
 )
 
 from ..tasks import (
-    set_msg_as_seen, 
-    send_direct_message, 
+    set_msg_as_seen,
+    send_direct_message,
     send_group_message,
 )
 from celery.result import AsyncResult
@@ -71,7 +71,7 @@ def prefetch_celery_behaviour(*tasks: Task):
                 logger.info("View called not in TESTING, celery will be applied asynchronously")
                 for _task in tasks:
                     kwargs[_task.__name__] = _task.apply
-            
+
             return func(*args, **kwargs)
 
         return wrapper
@@ -90,14 +90,14 @@ class ChatListCreateAPIView(viewsets.ViewSet):
     # GET my chats
     ###
     def get(self, request, *args, **kwargs):
-        """ 
+        """
             No auth, takes the request user from qs ?user_id=<user_id>
 
             If user_id is provided, return all the chatrooms and theire messages
             of user_id
 
-            I no id is provided, returns all the chatrooms (groups not private) 
-            showing only the chatroom names and ids 
+            I no id is provided, returns all the chatrooms (groups not private)
+            showing only the chatroom names and ids
 
         """
         ctx = {}
@@ -112,7 +112,7 @@ class ChatListCreateAPIView(viewsets.ViewSet):
                 ser = BaseChatRoomSerializer(all_chat_rooms, many = True)
 
             # user specified in the request query param
-            else: 
+            else:
                 if not user_id.isdigit:
                     raise ValidationError("user id most be a number")
                 user_id = int(user_id)
@@ -133,12 +133,12 @@ class ChatListCreateAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -154,7 +154,7 @@ class ChatListCreateAPIView(viewsets.ViewSet):
         """Creates a chatroom by name from body.
         This creation set the group as group chat not direct 'is_direct=False'
         {
-            "room_name": str 
+            "room_name": str
             "room_member: list({
                 "username": str
             })
@@ -191,7 +191,7 @@ class ChatListCreateAPIView(viewsets.ViewSet):
 
                 cr.room_member.set(room_members)
                 cr.save()
-                
+
             ser = ChatRoomSerializer(cr, many=False)
 
             ctx['status'] = status.HTTP_200_OK
@@ -202,12 +202,12 @@ class ChatListCreateAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -223,13 +223,13 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
     # GET chat__join_leave_read_chat
     ###
     def read_chat(self, request, group_id, *args, **kwargs):
-        """ 
+        """
             No auth, takes the request user from qs ?user_id=<user_id>
 
             If user_id is provided, returns the <group_id> chatroom and its messages
 
-            I no id is provided, returns the <group_id> chatroom (groups not private) 
-            showing only the chatroom name and id 
+            I no id is provided, returns the <group_id> chatroom (groups not private)
+            showing only the chatroom name and id
 
         """
         ctx = {}
@@ -245,7 +245,7 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
                 ser = BaseChatRoomSerializer(chat_room_no_details)
 
             # user specified in the request query param
-            else: 
+            else:
                 if not user_id.isdigit:
                     raise ValidationError("user id most be a number")
                 user_id = int(user_id)
@@ -269,12 +269,12 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -288,7 +288,7 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
     def leave_chat(self, request, group_id, *args, **kwargs):
         """removes the membership association user-chat_room
 
-           post_delete signals, if no user left in room and room not 
+           post_delete signals, if no user left in room and room not
            'is_direct' deletes the chat_room
 
            No auth, takes the request user from qs ?user_id=<user_id>
@@ -302,12 +302,12 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
             user_id = int(user_id)
             leaver: User = User.objects.get(pk=user_id)
             cr:ChatRoom = ChatRoom.objects.get(pk=group_id)
-            
+
             if not leaver in cr.room_member.all():
                 raise ValidationError("User %s is not part of this group" % leaver.username)
 
             cr.room_member.remove(leaver)
-            
+
             ctx['status'] = status.HTTP_204_NO_CONTENT
             ctx['message']= 'HTTP_204_NO_CONTENT'
 
@@ -315,12 +315,12 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -348,7 +348,7 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
 
             if new_member in cr.room_member.filter(membership__date_lefted__isnull=True):
                 raise ValidationError("User %s is already part of this group" % new_member.username)
-            
+
             else:
                 if cr.is_direct:
                     raise ValidationError("Can't join a private chat")
@@ -362,12 +362,12 @@ class ChatDestroyUpdateRetrieveAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -411,14 +411,14 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
             )
 
             user_chat_room.messages = BaseMessageSerializer(
-                user_chat_room.message_set.all(), 
+                user_chat_room.message_set.all(),
                 many=True
             ).data
-            
+
             # set asynchronously the messages as 'seen'
             set_msg_as_seen_apply_task(
                 kwargs={
-                    'chat_room_id':user_chat_room.pk, 
+                    'chat_room_id':user_chat_room.pk,
                     'reader_id':user_id
                 }
             )
@@ -433,12 +433,12 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -447,7 +447,7 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
             return Response(ctx, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     ###
-    # GET my all mine unseen msgs chat__get_unseen_messages 
+    # GET my all mine unseen msgs chat__get_unseen_messages
     # for long polling purpose to get all unseen messages
     ###
     @prefetch_celery_behaviour(set_msg_as_seen,)
@@ -469,7 +469,7 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
                     date_lefted__isnull=True
                 ).values('chatroom_id')
             )
-
+            
             chat_rooms = []
             # for all chatroom set all unseen msgs for user
             for cr in user_chat_rooms:
@@ -477,21 +477,30 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
                     'seenmessage_set'
                 )
                 unseen_msgs = cr_msgs.exclude(
-                    msg_from=reader
+                    msg_from=reader            # exclude msgs sent by me
+                ).annotate(
+                    already_seen=Subquery(
+                        SeenMessage.objects.filter(
+                            seen_by_id=reader.id,        # annotate the already senn msgs
+                            message_id=OuterRef('id'),
+                        ).values('message_id')
+                    )
                 ).filter(
-                    Q(seenmessage__isnull=True) | ~Q(seenmessage__seen_by=reader)
-                )
+                    already_seen__isnull=True
+                )                                # filter where annotation is None
+
+
                 cr.messages = BaseMessageSerializer(unseen_msgs, many=True).data
                 chat_rooms.append(cr)
 
                 # set asynchronously the messages as 'seen'
                 set_msg_as_seen_apply_task(
                     kwargs={
-                        'chat_room_id':cr.pk, 
+                        'chat_room_id':cr.pk,
                         'reader_id':user_id
                     }
                 )
-            
+
 
             ser = ChatRoomSerializer(chat_rooms, many=True)
 
@@ -503,12 +512,12 @@ class MessageRetrieveAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -541,12 +550,12 @@ class MessageStatusAPIView(viewsets.ViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -560,7 +569,7 @@ class MessageStatusAPIView(viewsets.ViewSet):
 class MessageCreateAPIView(viewsets.ModelViewSet):
     # permission_classes = (IsAuthenticated, BasicAuthentication, SessionAuthentication)
     queryset = Message.objects.all()
-    serializer_class = MessageSerializer  
+    serializer_class = MessageSerializer
 
     ###
     # POST chat__message_user_create
@@ -585,10 +594,10 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
             validation_err = list(validate_data(data, 'from', 'text'))
             if validation_err:
                 raise ValidationError('Attribute/s {} missing'.format(' - '.join(validation_err)))
-        
+
             job = send_direct_message_apply_task(
                 kwargs={
-                    'data':data, 
+                    'data':data,
                     'user_id':user_id
                 }
             )
@@ -601,12 +610,12 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:
@@ -638,7 +647,7 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
             # send asynchronously the message
             job = send_group_message_apply_task(
                 kwargs={
-                    'data':data, 
+                    'data':data,
                     'group_id': group_id
                 }
             )
@@ -651,12 +660,12 @@ class MessageCreateAPIView(viewsets.ModelViewSet):
 
         except ObjectDoesNotExist as ex:
             ctx['status'] = status.HTTP_404_NOT_FOUND
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_404_NOT_FOUND)
 
         except ValidationError as ex:
             ctx['status'] = status.HTTP_400_BAD_REQUEST
-            ctx['msg'] = str(ex)         
+            ctx['msg'] = str(ex)
             return Response(ctx, status=status.HTTP_400_BAD_REQUEST)
 
         except Exception as ex:

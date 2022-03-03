@@ -50,7 +50,7 @@ POST `http://localhost:8000/users/`
 }
 ```
 
-```
+```shell
 curl --location --request POST 'http://localhost:8000/users/' \
 --header 'Content-Type: application/json' \
 --data-raw '{
@@ -93,7 +93,7 @@ POST `http://localhost:8000/chat/chatroom/`
 ```
 
 Example creating a chatroom named 'family' with 3 users
-```
+```shell
 curl --location --request POST 'http://localhost:8000/chat/chatroom/' \
 --header 'Content-Type: application/json' \
 --data-raw '    {
@@ -141,7 +141,7 @@ POST `http://localhost:8000/chat/user/1/`
 }
 ```
 
-```
+```shell
 curl --location --request POST 'http://localhost:8000/chat/user/1/' \
 --header 'Content-Type: application/json' \
 --data-raw '{
@@ -159,7 +159,7 @@ POST `http://localhost:8000/chat/group/1/`
     "text": "hi fam"
 }
 ```
-```
+```shell
 curl --location --request POST 'http://localhost:8000/chat/group/1/' \
 --header 'Content-Type: application/json' \
 --data-raw '{

@@ -183,7 +183,7 @@ GET `http://localhost:8000/chat/messages/unseen/?user_id=8`
 
 _______________________________
 
-### GET SENT MESSAGE TASK STATUS
+### GET SENT MESSAGE TASK STATUS (task_id is returned by SEND DIRECT/GROUP MESSAGE api)
 `http://localhost:8000/chat/task_state/:task_id`
 
 `curl --location --request GET 'http://localhost:8000/chat/task_state/a487117c-d31b-45b0-ae3c-28126b0f3ec2'`

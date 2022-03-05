@@ -117,18 +117,24 @@ room_member are optional
 ### JOIN GROUP CHATROOM
 PUT `http://localhost:8000/chat/chatroom/:chatroom_id/?user_id=12`
 
-`curl --location --request PUT 'http://localhost:8000/chat/chatroom/1/?user_id=9'`
+```shell
+curl --location --request PUT 'http://localhost:8000/chat/chatroom/1/?user_id=9'
+```
 
 ### LEAVE CHATROOM
 DELETE `http://localhost:8000/chat/chatroom/:chatroom_id/?user_id=7`
 
-`curl --location --request DELETE 'http://localhost:8000/chat/chatroom/1/?user_id=7'`
+```shell
+curl --location --request DELETE 'http://localhost:8000/chat/chatroom/1/?user_id=7'
+```
 
 ### GET DIRECT CHATROOM
 GET `http://localhost:8000/chat/chatroom/:id/?user_id=7`
 -- optional user id
 
-`curl --location --request GET 'http://localhost:8000/chat/chatroom/1/?user_id=7'`
+```shell
+curl --location --request GET 'http://localhost:8000/chat/chatroom/1/?user_id=7'
+```
 
 _____________________________
 
@@ -174,18 +180,24 @@ GET `http://localhost:8000/chat/messages/:chatroom_id/?user_id=8`
 
 If authentication is not provided, the list will show up only the chartooms_name 
 
-`curl --location --request GET 'http://localhost:8000/chat/messages/1/?user_id=8'`
+```shell
+curl --location --request GET 'http://localhost:8000/chat/messages/1/?user_id=8'
+```
 
 ### ONLY MINE UNREAD MESSAGES
 GET `http://localhost:8000/chat/messages/unseen/?user_id=8`
 
-`curl --location --request GET 'http://localhost:8000/chat/messages/unseen/?user_id=8'`
+```shell
+curl --location --request GET 'http://localhost:8000/chat/messages/unseen/?user_id=8'
+```
 
 _______________________________
 
 ### GET SENT MESSAGE TASK STATUS (task_id is returned by SEND DIRECT/GROUP MESSAGE api)
 `http://localhost:8000/chat/task_state/:task_id`
 
-`curl --location --request GET 'http://localhost:8000/chat/task_state/a487117c-d31b-45b0-ae3c-28126b0f3ec2'`
+```shell
+curl --location --request GET 'http://localhost:8000/chat/task_state/a487117c-d31b-45b0-ae3c-28126b0f3ec2'
+```
 
 

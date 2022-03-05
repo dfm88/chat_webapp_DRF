@@ -70,7 +70,7 @@ def prefetch_celery_behaviour(*tasks: Task):
             else:
                 logger.info("View called not in TESTING, celery will be applied asynchronously")
                 for _task in tasks:
-                    kwargs[_task.__name__] = _task.apply
+                    kwargs[_task.__name__] = _task.apply_async
 
             return func(*args, **kwargs)
 
